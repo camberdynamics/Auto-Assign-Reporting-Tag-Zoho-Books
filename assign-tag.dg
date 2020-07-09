@@ -1,0 +1,104 @@
+//
+// Setup Invoice variables
+INVOICE_ID = invoice.get("invoice_id");
+ORG_ID = organization.get("organization_id");
+searchFullInvoice = zoho.books.getRecordsByID("Invoices",ORG_ID,INVOICE_ID);
+fullInvoice = searchFullInvoice.get("invoice");
+lineItems = fullInvoice.get("line_items");
+
+//
+// Get all reporting tags in organization via Zoho Books API
+reportingTagsResponse = invokeurl
+[
+	url :"https://books.zoho.com/api/v3/settings/tags?organization_id=" + ORG_ID
+	type :GET
+	connection:"zoho_books"
+];
+reportingTags = reportingTagsResponse.get("reporting_tags");
+
+//
+// Create map of Reporting Tag IDs, keyed by tag name for lookup
+reportingTagsMap = Map();
+for each  reportingTag in reportingTags
+{
+	tagName = reportingTag.get("tag_name");
+	tagId = reportingTag.get("tag_id");
+	reportingTagsMap.put(tagName,tagId);
+}
+taggedLineItemsMap = Map();
+
+//
+// Loop over Line Items 
+for each  lineItem in lineItems
+{
+	lineItemId = lineItem.get("line_item_id");
+	projectName = lineItem.get("project_name");
+  
+	//
+	// Check if item has project
+	if(!isNull(projectName))
+	{
+		// Check if tag currently exists, if not, create a new one
+		if(!reportingTagsMap.containKey(projectName))
+		{
+			// Create new tag
+			newTagMap = {"JSONString":{"tag_name":projectName,"tag_options":{{"tag_option_name":projectName,"is_active":true}}}};
+			createTag = invokeurl
+			[
+				url :"https://books.zoho.com/api/v3/settings/tags?organization_id=" + ORG_ID
+				type :POST
+				parameters:newTagMap
+				connection:"zoho_books"
+			];
+			info createTag;
+			responseCode = createTag.get('code');
+      
+			//
+			// If Create Tag is sucessfull, add tag data to the reportingTagsmap
+			if(responseCode == 0)
+			{
+				reportingTag = createTag.get("reporting_tag");
+				tagName = reportingTag.get("tag_name");
+				tagId = reportingTag.get("tag_id");
+				reportingTagsMap.put(tagName,tagId);
+			}
+		}
+		tagName = projectName;
+		tagId = reportingTagsMap.get(tagName);
+    
+		//
+		// Get full reporting tag
+		reportingTagResponse = invokeurl
+		[
+			url :"https://books.zoho.com/api/v3/settings/tags/" + tagId + "?organization_id=" + ORG_ID
+			type :GET
+			connection:"zoho_books"
+		];
+    
+		//
+		// Get Tag Option ID. This assumes there is only one tag option per tag. 
+		reportingTag = reportingTagResponse.get("reporting_tag");
+		tagOptions = reportingTag.get("tag_options");
+		defaultTagOption = tagOptions.get(0);
+		defaultTagOptionId = defaultTagOption.get("tag_option_id");
+    
+		//
+		// Construct line item update map
+		lineItemUpdateMap = Map();
+		lineItemUpdateMap.put("line_item_id",lineItemId);
+		lineItemUpdateMap.put("tags",{{"tag_id":tagId,"tag_option_id":defaultTagOptionId}});
+		json = {"JSONString":{"line_items":{lineItemUpdateMap}}};
+		info json;
+    
+		//
+		// Update Invoice
+		updateInvoice = invokeurl
+		[
+			url :"https://books.zoho.com/api/v3/invoices/" + INVOICE_ID + "?organization_id=" + ORG_ID
+			type :PUT
+			parameters:json
+			connection:"zoho_books"
+		];
+		info updateInvoice;
+	}
+}
